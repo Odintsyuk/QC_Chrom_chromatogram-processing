@@ -41,8 +41,8 @@ chrom содержит набор глобальных переменных, к�
 * Времена выхода пиков
   По-умолчанию  - ориентировочные времена выхода пиков в секундах
 
-        time_ethanol = 190
-        time_acn = 210
+        time_ethanol = 170
+        time_acn = 200
 
 * Значения ширины плечей пиков
 
@@ -69,20 +69,31 @@ chrom содержит набор глобальных переменных, к�
 
 Основные функции
 ----------------
-        datachrom(file) -> dict
-        findpeaks(file) -> dict
-        integration(int, file=None) -> float
-        gcnoise(file) -> float
-        gchrom_time(file) -> list
-        gchrom_sec(file) -> list
-        peak_xy(int) -> list
-        peakheight(list) -> float
-        fpeaks(file=None) -> None, components.update(key=value)
-        assym(list, float=None) -> float
-        plates(list, float=None) -> float
-        resolution(list, list, float=None, float=None) -> float
-        Wx(list, float, float=None) -> float
-        myround(float) -> float
+        safe_read_files(filename: Any,
+                    encoding: Any = None,
+                    errors: Any = None) -> list[str]
+        datachrom(filename: Any) -> dict | None
+        findpeaks(filename: Any) -> dict
+        integration(peaktime: Any,
+                filename: Any = None) -> float | None
+        gcnoise(filename: Any) -> float
+        gchrom_time(filename: Any) -> list[list[str | float]
+        gchrom_sec(filename: Any) -> None | list[list[int]] | list[list[int | float]]
+        peak_xy(peaktime: {__sub__}) -> list[int]
+        peakheight(p: {__getitem__} | list[float]) -> int | float
+        fpeaks(filename: Any = None) -> None
+        assym(p: {__getitem__} | list[float],
+          H: Any = None) -> float
+        plates(p: {__getitem__} | list[float],
+           H: Any = None) -> float
+        resolution(p1: {__getitem__} | list[float],
+               p2: {__getitem__} | list[float],
+               H1: Any = None,
+               H2: Any = None) -> float
+        Wx(p: {__getitem__},
+                x: Any,
+                H: {__mul__} | None = None) -> list
+        myround(x: Any) -> Any
 
 """
 
@@ -107,8 +118,8 @@ ddict = {}
 components = {}
 
 # ориентировочные времена выхода пиков
-time_ethanol = 190
-time_acn = 210
+time_ethanol = 170
+time_acn = 200
 
 # значения ширины левого (wing_L) и правого (wing_R) крыла пика
 wing_L = 15
@@ -123,6 +134,31 @@ noise = 0
 date_injection = str()
 time_injection = str()
 
+def safe_read_files(filename, encoding=None, errors=None):
+        """Безопасное чтение файла с автоматическим определением кодировки
+        Если ни одна из кодировок не подходит, чтение файла с игнорированием ошибок
+
+        Возвращаемое значение:
+                список строк файла
+
+        """
+        encodings = ['utf-8', 'windows-1251', 'cp1251', 'iso-8859-1', 'cp866']
+
+        # проверка и добавление кодировки
+        if encoding:
+                encodings = [encoding] + encodings
+
+        for enc in encodings:
+                try:
+                        with open(filename, 'r', encoding=enc, errors=errors) as f:
+                                return f.readlines()
+                except UnicodeDecodeError:
+                        continue
+
+        # Если все попытки неудачны
+        with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
+                return f.readlines()
+
 def datachrom(filename):
         """
         Принимает в качестве аргумента filename путь к файлу с данными
@@ -136,23 +172,22 @@ def datachrom(filename):
         L = []
         ddict.clear()
         try:
-                with open(filename, 'r') as inf:
-                        for line in inf:
-                                L.append(line.strip())
-                        global date_injection, time_injection
-                        date_time = re.search(r"\d\d.\d\d.\d{4} \d\d.\d\d",
-                                              L[0]).group()
-                        date_injection = date_time.split()[0]
-                        time_injection = date_time.split()[1]
+                for line in safe_read_files(filename):
+                        L.append(line.strip())
+                global date_injection, time_injection
+                date_time = re.search(r"\d\d.\d\d.\d{4} \d\d.\d\d",
+                                      L[0]).group()
+                date_injection = date_time.split()[0]
+                time_injection = date_time.split()[1]
                 
-                        for i in range(2, len(L)-2, 10):
-                                signal_average = []
-                                for j in range(10):
-                                        a = [_.start() for _ in re.finditer('\t', L[i+j])]
-                                        signal_average.append(float((L[i+j][a[0]+1:a[1]])))
-                                signal_average = round(sum(signal_average)/10, 3)
-                                m_s_format = int((i - 2) / 10)
-                                ddict[m_s_format] = signal_average
+                for i in range(2, len(L)-2, 10):
+                        signal_average = []
+                        for j in range(10):
+                                a = [_.start() for _ in re.finditer('\t', L[i+j])]
+                                signal_average.append(float((L[i+j][a[0]+1:a[1]])))
+                        signal_average = round(sum(signal_average)/10, 3)
+                        m_s_format = int((i - 2) / 10)
+                        ddict[m_s_format] = signal_average
                 print('Экспериментальные данные успешно получены')
                 return ddict
         except FileNotFoundError:
@@ -277,14 +312,13 @@ def gcnoise(filename):
         """
         L = []
         datas = []
-        with open(filename, 'r') as inf:
-                for line in inf:
-                        L.append(line.strip())
+        for line in safe_read_files(filename):
+                L.append(line.strip())
                         
-                # шум определяется на выбранно участке wing_noise:[start, end]
-                for i in L[wing_noise[0] * 10:wing_noise[1] * 10]:               
-                       a = [_.start() for _ in re.finditer('\t', i)]
-                       datas.append(float(i[(a[0]+1):(a[1])]))
+        # шум определяется на выбранно участке wing_noise:[start, end]
+        for i in L[wing_noise[0] * 10:wing_noise[1] * 10]:
+                a = [_.start() for _ in re.finditer('\t', i)]
+                datas.append(float(i[(a[0]+1):(a[1])]))
         # удаляем статистические выбросы макс и мин сигнала
         datas.remove(max(datas))
         datas.remove(min(datas))
@@ -299,24 +333,23 @@ def gchrom_time(filename):
 # представление данных хроматограммы в формате: [мин:сек, сигнал]
         L = []
         time_signal = []
-        
-        with open(filename, 'r') as inf:
-                for line in inf:
-                        L.append(line.strip())
+
+        for line in safe_read_files(filename):
+                L.append(line.strip())
                 
-                for i in range(2, len(L)-2, 10):
-                        signal_average = []
-                        for j in range(10):
-                                a = [_.start() for _ in re.finditer('\t', L[i+j])]
-                                signal_average.append(float((L[i+j][a[0]+1:a[1]])))
+        for i in range(2, len(L)-2, 10):
+                signal_average = []
+                for j in range(10):
+                        a = [_.start() for _ in re.finditer('\t', L[i+j])]
+                        signal_average.append(float((L[i+j][a[0]+1:a[1]])))
                         
-                        signal_average = round(sum(signal_average)/10, 3)
+                signal_average = round(sum(signal_average)/10, 3)
                         
-                        try:    m_s_format = datetime.time(minute=int((i-2)/10)//60, second=int((i-2)/10)%60).strftime('%M:%S')
+                try:    m_s_format = datetime.time(minute=int((i-2)/10)//60, second=int((i-2)/10)%60).strftime('%M:%S')
                                 
-                        except ValueError:
-                                print('Хроматограмма более часа')
-                        time_signal.append([m_s_format, signal_average])
+                except ValueError:
+                        print('Хроматограмма более часа')
+                time_signal.append([m_s_format, signal_average])
         return time_signal
 
 
@@ -338,29 +371,35 @@ def gchrom_sec(filename):
         L = []
         seconds_signal = []
         signal_list = []
-        try:
-                with open(filename, 'r') as inf:
-                        for line in inf:
-                                L.append(line.strip())
-                
-                        for i in range(2, len(L)-2, 10):
-                                signal_average = []
-                                for j in range(10):
-                                        a = [_.start() for _ in re.finditer('\t', L[i+j])]
-                                        signal_average.append(float((L[i+j][a[0]+1:a[1]])))
-                                        
-                                signal_average = round(sum(signal_average)/10, 3)
-                                m_s_format = int((i - 2) / 10)
-                                signal_list.append(signal_average)
-                                seconds_signal.append([m_s_format, signal_average])
-                        ymin = min(signal_list)
-                        ymax = max(signal_list)
-                        xmax = len(signal_list)
-                return seconds_signal
-        
-        except FileNotFoundError:
-                print('Файл не выбран')
-                return [[0, 0]]
+        encodings = ['utf-8', 'windows-1251', 'cp1251', 'iso-8859-1', 'cp866']
+        for encoding in encodings:
+                try:
+                        with open(filename, 'r', encoding=encoding) as inf:
+                                for line in inf:
+                                        L.append(line.strip())
+
+                                for i in range(2, len(L)-2, 10):
+                                        signal_average = []
+                                        for j in range(10):
+                                                a = [_.start() for _ in re.finditer('\t', L[i+j])]
+                                                signal_average.append(float((L[i+j][a[0]+1:a[1]])))
+
+                                        signal_average = round(sum(signal_average)/10, 3)
+                                        m_s_format = int((i - 2) / 10)
+                                        signal_list.append(signal_average)
+                                        seconds_signal.append([m_s_format, signal_average])
+                                ymin = min(signal_list)
+                                ymax = max(signal_list)
+                                xmax = len(signal_list)
+                                print(seconds_signal)
+                        return seconds_signal
+                except UnicodeDecodeError:
+                    continue
+                except FileNotFoundError:
+                        print('Файл не выбран')
+                        return [[0, 0]]
+                except Exception as e:
+                    print(f"Ошибка при чтении файла: {e}")
 
 def peak_xy(peaktime):
         """
@@ -447,8 +486,8 @@ def fpeaks(filename=None):
 
         """
         global components, time_ethanol, time_acn
-        time_ethanol = 190
-        time_acn = 210
+        time_ethanol = 170
+        time_acn = 200
         if filename is not None:
                 datachrom(filename)
         peaks, heights = find_peaks([x for x in ddict.values()],
@@ -522,9 +561,9 @@ def resolution(p1, p2, H1=None, H2=None):
 
         """
         if H1 is None:
-                H1 = peakheight(p)
+                H1 = peakheight(p1)
         if H2 is None:
-                H2 = peakheight(p)
+                H2 = peakheight(p2)
         tr1 = p1[2]
         tr2 = p2[2]
         w051 = Wx(p1, .5, H1)[0]

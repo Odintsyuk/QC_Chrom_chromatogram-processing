@@ -38,8 +38,8 @@ from kivy.uix.checkbox import CheckBox
 
 from pathlib import Path
 from functools import partial
-import win32api
-import win32file
+
+import psutil
 
 from GC import chrom
 
@@ -314,17 +314,20 @@ class ScreenMain(Screen):
         self.bl_file_list.add_widget(self.scroll)
 
         self.add_widget(bl)
-    
+
     def scan_local_drives(self, *args):
         self.drives_box.clear_widgets()
         self.drives_box.add_widget(self.btn_root)
-        drives = win32api.GetLogicalDriveStrings()
-        drives = drives.split('\000')[:-1]
-        for d in drives:
-            if win32file.GetDriveType(d) in [0, 1, 5, 6]:
-                drives.remove(d)
-        for i in drives:
-            self.btn_drive = Button(text=i,
+
+        # Получаем все подключенные диски
+        drives = []
+        for partition in psutil.disk_partitions():
+            # Фильтруем только локальные файловые системы
+            if partition.fstype and not partition.device.startswith(('/sys', '/proc', '/dev')):
+                drives.append(partition.mountpoint)
+
+        for drive in drives:
+            self.btn_drive = Button(text=drive,
                                     size_hint=(None, 1),
                                     width=50,
                                     background_color=[.94, .94, .94, 1],
@@ -335,6 +338,7 @@ class ScreenMain(Screen):
                                     on_press=self.change_drive
                                     )
             self.drives_box.add_widget(self.btn_drive)
+
         self.drives_box.add_widget(Button(background_color=[.94, .94, .94, 1],
                                           background_normal='images/statusbar.png',
                                           background_down=''))
@@ -360,37 +364,68 @@ class ScreenMain(Screen):
             self.status_bar.text_size[0] = 300
         self.date_inj.text_size = [Window.width/2-10, 20]
     
+
     def readfile(self, instance):
         """Creates buttons for each file in filelist contains GC data
         clicking on the button opens a file with the button's name
         if no files are found in the root directory,
         a widget is created with the message
-        
         """
         textfile = []
         self.scroll_grid.clear_widgets()
         self.scroll.clear_widgets()
+
         # find only *.txt files
         paths = Path('.').glob('*.txt')
-        for i in list(map(str, paths)):
+
+        def try_read_file(file_path):
+            """Try read file with different encodings and checks file for matching the template"""
+            encodings = ['utf-8', 'windows-1251', 'cp1251', 'iso-8859-1', 'cp866']
+
+            for encoding in encodings:
+                try:
+                    with open(file_path, 'r', encoding=encoding) as inf:
+                        for n, line in enumerate(inf, 1):
+                            line = line.rstrip('\n')
+                            if line.find('FID A, pA') != -1:
+                                return True
+                    # if not matching
+                    return False
+                except UnicodeDecodeError:
+                    continue
+                except Exception as e:
+                    print(f"Ошибка при чтении файла {file_path}: {e}")
+                    return False
+
+            # if no encoding is suitable then try read ignoring errors
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as inf:
+                    for n, line in enumerate(inf, 1):
+                        line = line.rstrip('\n')
+                        if line.find('FID A, pA') != -1:
+                            return True
+                return False
+            except Exception as e:
+                print(f"Критическая ошибка при чтении файла {file_path}: {e}")
+                return False
+
+        for file_path in list(map(str, paths)):
             # checks each .txt file on contain GC data
-            with open(i, 'r') as inf:
-                for n, line in enumerate(inf, 1):
-                    line = line.rstrip('\n')
-                    if line.find('FID A, pA') != -1:
-                        textfile.append(i)
-                        continue
+            if try_read_file(file_path):
+                textfile.append(file_path)
+
         # if no files are found
         if not textfile:
             self.label_empty_list = MyLabel(text='Файлов с данными хроматографии'
-                                            '\nв корневой папке программы не '
-                                            'обнаружено \nНажмите "Открыть файл" '
-                                            'и загрузите данные',
+                                                 '\nв корневой папке программы не '
+                                                 'обнаружено \nНажмите "Открыть файл" '
+                                                 'и загрузите данные',
                                             font_size=14,
                                             halign='center'
                                             )
             self.scroll.add_widget(self.label_empty_list)
             return
+
         for i in textfile:
             self.btn = Button(text=i,
                               color=(0, 0, 0, 1),
@@ -405,6 +440,7 @@ class ScreenMain(Screen):
                               )
             self.btn.text_size = [self.btn.width, 25]
             self.scroll_grid.add_widget(self.btn)
+
         self.scroll.add_widget(self.scroll_grid)
 
     def param_chrom_auto(self, instance):
@@ -506,18 +542,21 @@ class ScreenMain(Screen):
         # passes Path as an argument to the statusbar foo,
         ## or calls not_gc foo (file not contains GC data)
         # ignores submit if file doesn't have GC data
-        try:
-            if args[1][0].endswith('.txt'):
-                with open(args[1][0], 'r') as inf:
-                    for n, line in enumerate(inf, 1):
-                        line = line.rstrip('\n')
-                        # checks the file contents for GC data
-                        if line.find('FID A, pA') != -1:
-                            self.modal_open_file.dismiss()
-                            self.statusbar(args[1][0])
-                            
-        except Exception:
-            pass
+        encodings = ['utf-8', 'windows-1251', 'cp1251', 'iso-8859-1', 'cp866']
+        for encoding in encodings:
+            try:
+                if args[1][0].endswith('.txt'):
+                    with open(args[1][0], 'r', encoding=encoding) as inf:
+                        for n, line in enumerate(inf, 1):
+                            line = line.rstrip('\n')
+                            # checks the file contents for GC data
+                            if line.find('FID A, pA') != -1:
+                                self.modal_open_file.dismiss()
+                                self.statusbar(args[1][0])
+            except UnicodeDecodeError:
+                continue
+            except Exception:
+                pass
             
     def screen_open_file(self, *args):
         self.manager.transition.direction = 'up'
