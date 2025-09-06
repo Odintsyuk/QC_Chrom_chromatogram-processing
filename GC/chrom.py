@@ -98,10 +98,7 @@ chrom содержит набор глобальных переменных, к�
 """
 
 import re
-import time
 import datetime
-import math
-from statistics import mean
 from sympy.geometry import *
 from scipy.interpolate import InterpolatedUnivariateSpline
 from scipy.signal import find_peaks
